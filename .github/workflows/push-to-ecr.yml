@@ -1,0 +1,81 @@
+name: Push Docker Image to ECR
+
+on:
+  workflow_call:
+    inputs:
+      service_name:
+        required: true
+        type: string
+      git_tag:
+        required: true
+        type: string
+      tag_exists:
+        required: false
+        type: string
+        default: "false"
+      aws_region:
+        required: false
+        type: string
+        default: us-east-1
+    secrets:
+      AWS_ACCOUNT_ID:
+        required: true
+      ECR_ROLE_ARN:
+        required: true
+    outputs:
+      tag:
+        value: ${{ jobs.push.outputs.tag }}
+      push_result:
+        value: ${{ jobs.push.result }}
+
+jobs:
+  push:
+    name: Push ${{ inputs.service_name }}:${{ inputs.git_tag }}
+    runs-on: ubuntu-latest
+    if: inputs.tag_exists == 'false'
+    outputs:
+      tag: ${{ inputs.git_tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.service_name }}-image
+          path: /tmp
+
+      - name: Load Docker image
+        run: docker load --input /tmp/${{ inputs.service_name }}.tar
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.ECR_ROLE_ARN }}
+          aws-region: ${{ inputs.aws_region }}
+
+      - name: Login to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Tag and push to ECR (immutable — no :latest)
+        run: |
+          ECR_URI="${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ inputs.aws_region }}.amazonaws.com/${{ inputs.service_name }}"
+          docker tag "${{ inputs.service_name }}:${{ inputs.git_tag }}" "${ECR_URI}:${{ inputs.git_tag }}"
+          docker push "${ECR_URI}:${{ inputs.git_tag }}"
+          echo "Pushed ${ECR_URI}:${{ inputs.git_tag }}"
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign image with Cosign (keyless)
+        run: |
+          ECR_URI="${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ inputs.aws_region }}.amazonaws.com/${{ inputs.service_name }}"
+          cosign sign --yes "${ECR_URI}:${{ inputs.git_tag }}"
+
+      - name: Create git semver tag (main only)
+        if: github.ref == 'refs/heads/main'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "${{ inputs.git_tag }}" || echo "Tag already exists, skipping"
+          git push origin "${{ inputs.git_tag }}" || echo "Tag push skipped"

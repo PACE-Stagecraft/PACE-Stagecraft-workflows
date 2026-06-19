@@ -1,0 +1,96 @@
+name: Failure Notification
+
+on:
+  workflow_call:
+    inputs:
+      service_name:
+        required: true
+        type: string
+      build_result:
+        required: false
+        type: string
+        default: skipped
+      push_result:
+        required: false
+        type: string
+        default: skipped
+      trivy_result:
+        required: false
+        type: string
+        default: skipped
+      generate_tag_result:
+        required: false
+        type: string
+        default: skipped
+      git_tag:
+        required: false
+        type: string
+        default: ""
+    secrets:
+      SENDGRID_API_KEY:
+        required: true
+      NOTIFY_EMAIL:
+        required: true
+
+jobs:
+  notify:
+    name: Send failure email
+    runs-on: ubuntu-latest
+    if: |
+      inputs.build_result == 'failure' ||
+      inputs.push_result == 'failure' ||
+      inputs.trivy_result == 'failure' ||
+      inputs.generate_tag_result == 'failure'
+    steps:
+      - name: Build failure summary
+        id: summary
+        run: |
+          ROWS=""
+          add_row() {
+            local name="$1" result="$2"
+            if [ "$result" = "failure" ]; then
+              ROWS="${ROWS}<tr><td>${name}</td><td style='color:red'>❌ FAILED</td></tr>"
+            elif [ "$result" = "success" ]; then
+              ROWS="${ROWS}<tr><td>${name}</td><td style='color:green'>✅ PASSED</td></tr>"
+            elif [ "$result" != "skipped" ]; then
+              ROWS="${ROWS}<tr><td>${name}</td><td style='color:orange'>⚠️ ${result}</td></tr>"
+            fi
+          }
+          add_row "Generate Tag" "${{ inputs.generate_tag_result }}"
+          add_row "Build Image"  "${{ inputs.build_result }}"
+          add_row "Trivy Scan"   "${{ inputs.trivy_result }}"
+          add_row "Push to ECR"  "${{ inputs.push_result }}"
+          echo "rows<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$ROWS" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Send email via SendGrid
+        env:
+          SENDGRID_API_KEY: ${{ secrets.SENDGRID_API_KEY }}
+          NOTIFY_EMAIL: ${{ secrets.NOTIFY_EMAIL }}
+        run: |
+          SUBJECT="[aGorA] CI/CD Failure — ${{ inputs.service_name }}"
+          BODY="<html><body>
+          <h2>Pipeline failure in <b>${{ inputs.service_name }}</b></h2>
+          <p>
+            <b>Branch:</b> ${{ github.ref_name }}<br>
+            <b>Commit:</b> ${{ github.sha }}<br>
+            <b>Tag:</b> ${{ inputs.git_tag }}<br>
+            <b>Run:</b> <a href='${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'>View on GitHub</a>
+          </p>
+          <table border='1' cellpadding='8' style='border-collapse:collapse'>
+            <tr><th>Stage</th><th>Result</th></tr>
+            ${{ steps.summary.outputs.rows }}
+          </table>
+          </body></html>"
+
+          curl -s --request POST \
+            --url https://api.sendgrid.com/v3/mail/send \
+            --header "Authorization: Bearer $SENDGRID_API_KEY" \
+            --header 'Content-Type: application/json' \
+            --data "{
+              \"personalizations\": [{\"to\": [{\"email\": \"$NOTIFY_EMAIL\"}]}],
+              \"from\": {\"email\": \"ci@agora-ops.github.com\", \"name\": \"aGorA CI\"},
+              \"subject\": \"$SUBJECT\",
+              \"content\": [{\"type\": \"text/html\", \"value\": \"$BODY\"}]
+            }"

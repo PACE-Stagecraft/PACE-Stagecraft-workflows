@@ -1,0 +1,73 @@
+name: Update Helm Chart Image Tag
+
+on:
+  workflow_call:
+    inputs:
+      service_name:
+        required: true
+        type: string
+      image_tag:
+        required: true
+        type: string
+      target_branch:
+        required: false
+        type: string
+        default: main
+      github_org:
+        required: false
+        type: string
+        default: aGora-Ops
+      aws_region:
+        required: false
+        type: string
+        default: us-east-1
+    secrets:
+      HELM_CHARTS_TOKEN:
+        required: true
+      AWS_ACCOUNT_ID:
+        required: true
+
+jobs:
+  update-helm-values:
+    name: Update ${{ inputs.service_name }} → ${{ inputs.image_tag }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout agora-helm
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.github_org }}/agora-helm
+          token: ${{ secrets.HELM_CHARTS_TOKEN }}
+          ref: main
+
+      - name: Update image repository + tag in values file
+        run: |
+          SERVICE="${{ inputs.service_name }}"
+          TAG="${{ inputs.image_tag }}"
+          TARGET="${{ inputs.target_branch }}"
+          REPO_URL="${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ inputs.aws_region }}.amazonaws.com/${SERVICE}"
+
+          if [ "$TARGET" = "main" ]; then
+            VALUES_FILE="charts/${SERVICE}/values.prod.yaml"
+          else
+            VALUES_FILE="charts/${SERVICE}/values.dev.yaml"
+          fi
+
+          if [ ! -f "$VALUES_FILE" ]; then
+            echo "Error: $VALUES_FILE not found"
+            exit 1
+          fi
+
+          sed -i "s|^  repository: .*|  repository: \"${REPO_URL}\"|" "$VALUES_FILE"
+          sed -i "s/^  tag: .*/  tag: \"${TAG}\"/" "$VALUES_FILE"
+
+          echo "Updated ${VALUES_FILE}:"
+          cat "$VALUES_FILE"
+
+      - name: Commit and push
+        run: |
+          git config user.name "agora-bot"
+          git config user.email "bot@agora-ops.github.com"
+          git add .
+          git diff --staged --quiet && echo "No changes" && exit 0
+          git commit -m "chore(${{ inputs.service_name }}): bump image to ${{ inputs.image_tag }}"
+          git push

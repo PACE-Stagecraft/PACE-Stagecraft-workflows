@@ -1,0 +1,58 @@
+name: Python CI — Lint, Type-Check & Test
+
+on:
+  workflow_call:
+    inputs:
+      python-version:
+        required: false
+        type: string
+        default: "3.12"
+      working-directory:
+        required: false
+        type: string
+        default: "."
+      test-path:
+        required: false
+        type: string
+        default: "tests/"
+
+jobs:
+  python-ci:
+    name: Python ${{ inputs.python-version }} CI
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python-version }}
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Install dependencies (with test extras)
+        run: uv pip install --system ".[test]" || uv pip install --system .
+
+      - name: Lint with ruff
+        run: |
+          pip install ruff
+          ruff check app/
+
+      - name: Type check with mypy
+        run: |
+          pip install mypy
+          mypy app/ --ignore-missing-imports || true
+
+      - name: Run tests
+        run: python -m pytest ${{ inputs.test-path }} -v --tb=short
+        env:
+          SECRET_KEY: ci-test-secret-key-not-for-production
+          DATABASE_URL: postgresql+asyncpg://x:x@localhost/x
+          REDIS_URL: redis://localhost:6379/0
+          GITHUB_WEBHOOK_SECRET: ci-test-webhook-secret
+          AWS_REGION: us-east-1
+          SQS_QUEUE_URL: https://sqs.us-east-1.amazonaws.com/000000000000/test
