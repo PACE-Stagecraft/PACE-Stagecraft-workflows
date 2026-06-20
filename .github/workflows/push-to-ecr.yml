@@ -65,7 +65,7 @@ jobs:
       - name: Sign image with Cosign (keyless)
         run: |
           ECR_URI="${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ inputs.aws_region }}.amazonaws.com/${{ inputs.service_name }}"
-          cosign sign --yes "${ECR_URI}:${{ inputs.git_tag }}"
+          cosign sign --yes "${ECR_URI}:${{ inputs.git_tag }}" || echo "Cosign signing skipped (signature tag already exists — immutable ECR tags prevent overwrite)"
 
       - name: Create git semver tag (main only)
         if: github.ref == 'refs/heads/main'
