@@ -70,13 +70,17 @@ jobs:
         id: check
         run: |
           TAG="${{ steps.tag.outputs.tag }}"
-          EXISTS=$(aws ecr describe-images \
+          if aws ecr describe-images \
             --repository-name "${{ inputs.service_name }}" \
             --image-ids imageTag="${TAG}" \
-            --region "${{ inputs.aws_region }}" 2>/dev/null && echo "true" || echo "false")
+            --region "${{ inputs.aws_region }}" > /dev/null 2>&1; then
+            EXISTS="true"
+          else
+            EXISTS="false"
+          fi
           echo "tag_exists=${EXISTS}" >> "$GITHUB_OUTPUT"
           echo "image_exists=${EXISTS}" >> "$GITHUB_OUTPUT"
-          echo "Image exists: ${EXISTS}"
+          echo "Image tag ${TAG} exists in ECR: ${EXISTS}"
 
   build-image:
     name: Build Docker Image
