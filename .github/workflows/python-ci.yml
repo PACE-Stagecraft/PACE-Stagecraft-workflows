@@ -50,8 +50,10 @@ jobs:
       - name: Run tests
         run: python -m pytest ${{ inputs.test-path }} -v --tb=short
         env:
+          # DATABASE_URL intentionally NOT set here — each service's test files set
+          # the correct driver via os.environ.setdefault (api → asyncpg, worker → psycopg2).
+          # A global override would force the wrong driver and break import-time engine creation.
           SECRET_KEY: ci-test-secret-key-not-for-production
-          DATABASE_URL: postgresql+asyncpg://x:x@localhost/x
           REDIS_URL: redis://localhost:6379/0
           GITHUB_WEBHOOK_SECRET: ci-test-webhook-secret
           AWS_REGION: us-east-1
