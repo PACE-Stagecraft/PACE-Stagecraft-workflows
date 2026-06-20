@@ -26,11 +26,6 @@ on:
         required: false
         type: string
         default: ""
-    secrets:
-      SENDGRID_API_KEY:
-        required: true
-      NOTIFY_EMAIL:
-        required: true
 
 jobs:
   notify:

@@ -21,11 +21,6 @@ on:
         required: false
         type: string
         default: us-east-1
-    secrets:
-      HELM_CHARTS_TOKEN:
-        required: true
-      AWS_ACCOUNT_ID:
-        required: true
 
 jobs:
   update-helm-values:

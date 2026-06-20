@@ -18,11 +18,6 @@ on:
         required: false
         type: boolean
         default: true
-    secrets:
-      AWS_ACCOUNT_ID:
-        required: true
-      ECR_ROLE_ARN:
-        required: true
     outputs:
       tag:
         value: ${{ jobs.generate-tag.outputs.tag }}

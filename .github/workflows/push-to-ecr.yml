@@ -17,11 +17,6 @@ on:
         required: false
         type: string
         default: us-east-1
-    secrets:
-      AWS_ACCOUNT_ID:
-        required: true
-      ECR_ROLE_ARN:
-        required: true
     outputs:
       tag:
         value: ${{ jobs.push.outputs.tag }}
