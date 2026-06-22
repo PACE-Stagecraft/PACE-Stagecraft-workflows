@@ -55,6 +55,15 @@ jobs:
           sed -i "s|^  repository: .*|  repository: \"${REPO_URL}\"|" "$VALUES_FILE"
           sed -i "s/^  tag: .*/  tag: \"${TAG}\"/" "$VALUES_FILE"
 
+          # mainAccountId backs the ServiceAccount's IRSA role-arn annotation
+          # (agora-api/webhook/worker only — mcp-github/frontend don't have an
+          # IRSA role and won't have this field). Without this, the account ID
+          # used for repository: above would update on every deploy but the
+          # IAM role-arn would silently keep pointing at the OLD account.
+          if grep -q "^  mainAccountId:" "$VALUES_FILE"; then
+            sed -i "s/^  mainAccountId: .*/  mainAccountId: \"${{ secrets.AWS_ACCOUNT_ID }}\"/" "$VALUES_FILE"
+          fi
+
           echo "Updated ${VALUES_FILE}:"
           cat "$VALUES_FILE"
 
