@@ -26,6 +26,8 @@ on:
     secrets:
       AWS_PLAN_ROLE_ARN:
         required: true
+      INFRACOST_API_KEY:
+        required: false
 
 jobs:
   terraform-plan:
@@ -83,6 +85,29 @@ jobs:
           name: tfplan-${{ inputs.environment }}
           path: ${{ inputs.working_directory }}/tfplan.binary
           retention-days: 1
+
+      - name: Setup Infracost
+        if: github.event_name == 'pull_request' && secrets.INFRACOST_API_KEY != ''
+        uses: infracost/actions/setup@v3
+        with:
+          api-key: ${{ secrets.INFRACOST_API_KEY }}
+
+      - name: Generate Infracost cost diff
+        if: github.event_name == 'pull_request' && secrets.INFRACOST_API_KEY != ''
+        run: |
+          infracost breakdown --path tfplan.binary \
+            --format json \
+            --out-file /tmp/infracost.json
+
+      - name: Post Infracost comment to PR
+        if: github.event_name == 'pull_request' && secrets.INFRACOST_API_KEY != ''
+        run: |
+          infracost comment github \
+            --path /tmp/infracost.json \
+            --repo "${{ github.repository }}" \
+            --pull-request "${{ github.event.pull_request.number }}" \
+            --github-token "${{ github.token }}" \
+            --behavior update
 
       - name: Post plan to PR
         if: github.event_name == 'pull_request'
