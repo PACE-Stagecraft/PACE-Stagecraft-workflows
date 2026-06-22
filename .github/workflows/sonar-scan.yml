@@ -1,0 +1,44 @@
+name: SonarCloud Scan
+
+on:
+  workflow_call:
+    inputs:
+      service_name:
+        required: true
+        type: string
+      working-directory:
+        required: false
+        type: string
+        default: "."
+      sonar_organization:
+        required: true
+        type: string
+    secrets:
+      SONAR_TOKEN:
+        required: true
+
+jobs:
+  sonar:
+    name: SonarCloud Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # SonarCloud uses git blame history for new-code/ownership metrics —
+          # a shallow checkout makes that data incomplete.
+          fetch-depth: 0
+
+      # Informational only for now: this step reports findings to SonarCloud's
+      # dashboard and (on PRs) posts a decoration comment, but does NOT fail
+      # the build. Add a SonarSource/sonarqube-quality-gate-action step here
+      # later if/when you want a failing quality gate to block CI.
+      - name: SonarCloud Scan
+        uses: SonarSource/sonarqube-scan-action@v4
+        with:
+          projectBaseDir: ${{ inputs.working-directory }}
+          args: >
+            -Dsonar.projectKey=${{ inputs.sonar_organization }}_${{ inputs.service_name }}
+            -Dsonar.organization=${{ inputs.sonar_organization }}
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: https://sonarcloud.io
