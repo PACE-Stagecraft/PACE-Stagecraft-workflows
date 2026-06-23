@@ -47,11 +47,41 @@ jobs:
         id: tag
         run: |
           if [ "${{ github.ref }}" = "refs/heads/main" ]; then
-            LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
-            MAJOR=$(echo $LAST_TAG | cut -d. -f1 | tr -d v)
-            MINOR=$(echo $LAST_TAG | cut -d. -f2)
-            PATCH=$(echo $LAST_TAG | cut -d. -f3)
-            NEW_TAG="v${MAJOR}.${MINOR}.$((PATCH + 1))"
+            # Semantic version, bumped by scanning every commit message since
+            # the last vX.Y.Z tag (or full history if none exists yet) for
+            # conventional-commit prefixes. Highest-severity match wins:
+            #   feat!: / type(scope)!: / "BREAKING CHANGE:" anywhere -> major
+            #   feat: / feat(scope):                               -> minor
+            #   anything else (fix:, chore:, or no convention at all) -> patch
+            # --match 'v*' keeps this immune to any non-semver tag that might
+            # exist for another reason (e.g. develop-<sha> is never pushed as
+            # a real git tag today, but this is a free safety margin either way).
+            LAST_TAG=$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || echo "v0.0.0")
+            MAJOR=$(echo "$LAST_TAG" | cut -d. -f1 | tr -d v)
+            MINOR=$(echo "$LAST_TAG" | cut -d. -f2)
+            PATCH=$(echo "$LAST_TAG" | cut -d. -f3)
+
+            if git rev-parse "$LAST_TAG" >/dev/null 2>&1; then
+              COMMITS=$(git log "${LAST_TAG}..HEAD" --pretty=format:"%s%n%b")
+            else
+              COMMITS=$(git log --pretty=format:"%s%n%b")
+            fi
+
+            if echo "$COMMITS" | grep -qE '^[a-zA-Z]+(\([^)]*\))?!:|BREAKING CHANGE:'; then
+              MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0
+              BUMP="major"
+            elif echo "$COMMITS" | grep -qE '^feat(\([^)]*\))?:'; then
+              MINOR=$((MINOR + 1)); PATCH=0
+              BUMP="minor"
+            else
+              PATCH=$((PATCH + 1))
+              BUMP="patch"
+            fi
+            NEW_TAG="v${MAJOR}.${MINOR}.${PATCH}"
+            echo "Bump type: ${BUMP} (last tag: ${LAST_TAG})"
+          elif [ "${{ github.ref }}" = "refs/heads/develop" ]; then
+            SHA=$(echo "${{ github.sha }}" | cut -c1-8)
+            NEW_TAG="develop-${SHA}"
           else
             BRANCH=$(echo "${{ github.ref_name }}" | sed 's/[^a-zA-Z0-9._-]/-/g' | cut -c1-40)
             SHA=$(echo "${{ github.sha }}" | cut -c1-8)

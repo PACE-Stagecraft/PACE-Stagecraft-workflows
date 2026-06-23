@@ -30,23 +30,82 @@ on:
         required: false
 
 jobs:
-  terraform-plan:
-    name: Plan (${{ inputs.environment }})
+  # ── Format check — pure syntax, no AWS access, no terraform init needed.
+  # Split out so a formatting nit fails fast without waiting on init/AWS auth.
+  fmt:
+    name: Format Check
     runs-on: ubuntu-latest
-    environment: ${{ inputs.environment }}
+    defaults:
+      run:
+        working-directory: ${{ inputs.working_directory }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ inputs.terraform_version }}
+
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive
+
+  # ── Checkov — static IaC security/compliance scan. Operates on the raw .tf
+  # source, no terraform init/AWS access needed. Informational only for now
+  # (soft_fail) — this repo has known, already-documented gaps (e.g.
+  # unencrypted RDS) that shouldn't block every PR until triaged. Findings
+  # still surface in the Security tab via SARIF upload.
+  checkov:
+    name: Checkov IaC Scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Checkov
+        uses: bridgecrewio/checkov-action@v12.3107.0
+        with:
+          directory: ${{ inputs.working_directory }}
+          framework: terraform
+          soft_fail: true
+          output_format: sarif
+          output_file_path: reports
+
+      - name: Locate the SARIF file
+        # The action writes some checkov-version-specific filename into the
+        # output dir (varies by checkov release) — find it by extension
+        # instead of hardcoding a name that could silently stop matching.
+        if: always()
+        id: find_sarif
+        run: |
+          FILE=$(find reports -maxdepth 1 -iname '*.sarif' | head -1)
+          if [ -z "$FILE" ]; then
+            echo "No SARIF file found under reports/ — listing dir for debugging:"
+            ls -la reports/ || true
+            exit 1
+          fi
+          echo "path=${FILE}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload SARIF to Security tab
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: ${{ steps.find_sarif.outputs.path }}
+          category: checkov-${{ inputs.environment }}
+
+  # ── Validate — needs AWS creds (terraform init reads the S3 backend +
+  # downloads providers) but not a plan. Split out so an invalid config fails
+  # before ever attempting a plan.
+  validate:
+    name: Validate
+    runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: ${{ inputs.working_directory }}
     permissions:
       id-token: write
       contents: read
-      pull-requests: write
-    env:
-      # Step-level `if:` can't reference `secrets.*` directly — only env/job
-      # outputs are visible there. Hoist it once so the Infracost steps below
-      # can gate on whether the secret is actually set.
-      HAS_INFRACOST_KEY: ${{ secrets.INFRACOST_API_KEY != '' }}
-
     steps:
       - uses: actions/checkout@v4
 
@@ -61,14 +120,45 @@ jobs:
         with:
           terraform_version: ${{ inputs.terraform_version }}
 
-      - name: Terraform Format Check
-        run: terraform fmt -check -recursive
-
       - name: Terraform Init
         run: terraform init -input=false
 
       - name: Terraform Validate
         run: terraform validate
+
+  # ── Plan — the actual plan. Each job is a fresh runner, so init reruns here
+  # too (normal for split reusable workflows; AWS provider download is the
+  # only real cost and gets cached by setup-terraform's plugin cache).
+  plan:
+    name: Plan (${{ inputs.environment }})
+    needs: validate
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    defaults:
+      run:
+        working-directory: ${{ inputs.working_directory }}
+    permissions:
+      id-token: write
+      contents: read
+      pull-requests: write
+    outputs:
+      plan_exitcode: ${{ steps.plan.outputs.exitcode }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC — plan only)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_PLAN_ROLE_ARN }}
+          aws-region: ${{ inputs.aws_region }}
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ inputs.terraform_version }}
+
+      - name: Terraform Init
+        run: terraform init -input=false
 
       - name: Terraform Plan
         id: plan
@@ -90,6 +180,58 @@ jobs:
           name: tfplan-${{ inputs.environment }}
           path: ${{ inputs.working_directory }}/tfplan.binary
           retention-days: 1
+
+      - name: Upload plan text (for the cost job to read without re-planning)
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-text-${{ inputs.environment }}
+          path: ${{ inputs.working_directory }}/plan.txt
+          retention-days: 1
+
+      - name: Post plan to PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const plan = fs.readFileSync('${{ inputs.working_directory }}/plan.txt', 'utf8');
+            const truncated = plan.length > 60000 ? plan.substring(0, 60000) + '\n...[truncated]' : plan;
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## Terraform Plan — \`${{ inputs.environment }}\`\n\`\`\`\n${truncated}\n\`\`\``
+            });
+
+  # ── Cost estimate (Infracost) — needs the plan's binary output. Only runs
+  # on PRs, and only if the org has actually set up an Infracost API key.
+  # NEITHER job-level NOR step-level `if:` can read the `secrets` context
+  # directly (confirmed the hard way in an earlier incident — see
+  # helm-update.yml) — only `env:`/`with:`/`run:` can. So the job always
+  # runs (cheap — checkout + a no-op if the key is unset) and every
+  # consequential step is individually gated on a job-level env var instead.
+  cost:
+    name: Cost Estimate
+    needs: plan
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.working_directory }}
+    permissions:
+      contents: read
+      pull-requests: write
+    env:
+      HAS_INFRACOST_KEY: ${{ secrets.INFRACOST_API_KEY != '' }}
+    steps:
+      - uses: actions/checkout@v4
+        if: github.event_name == 'pull_request' && env.HAS_INFRACOST_KEY == 'true'
+
+      - name: Download plan artifact
+        if: github.event_name == 'pull_request' && env.HAS_INFRACOST_KEY == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan-${{ inputs.environment }}
+          path: ${{ inputs.working_directory }}
 
       - name: Setup Infracost
         if: github.event_name == 'pull_request' && env.HAS_INFRACOST_KEY == 'true'
@@ -113,18 +255,3 @@ jobs:
             --pull-request "${{ github.event.pull_request.number }}" \
             --github-token "${{ github.token }}" \
             --behavior update
-
-      - name: Post plan to PR
-        if: github.event_name == 'pull_request'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fs = require('fs');
-            const plan = fs.readFileSync('${{ inputs.working_directory }}/plan.txt', 'utf8');
-            const truncated = plan.length > 60000 ? plan.substring(0, 60000) + '\n...[truncated]' : plan;
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: `## Terraform Plan — \`${{ inputs.environment }}\`\n\`\`\`\n${truncated}\n\`\`\``
-            });

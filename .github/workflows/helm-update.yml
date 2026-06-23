@@ -9,10 +9,6 @@ on:
       image_tag:
         required: true
         type: string
-      target_branch:
-        required: false
-        type: string
-        default: main
       github_org:
         required: false
         type: string
@@ -38,10 +34,12 @@ jobs:
         run: |
           SERVICE="${{ inputs.service_name }}"
           TAG="${{ inputs.image_tag }}"
-          TARGET="${{ inputs.target_branch }}"
           REPO_URL="${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ inputs.aws_region }}.amazonaws.com/${SERVICE}"
 
-          if [ "${{ github.ref }}" = "refs/heads/main" ] || [ "$TARGET" = "dev" ] || [ "$TARGET" = "develop" ]; then
+          # develop -> the live dev cluster's values; main -> values reserved
+          # for the (not-yet-deployed) prod cluster. Derived purely from the
+          # ref that triggered this build, not a caller-supplied branch name.
+          if [ "${{ github.ref }}" = "refs/heads/develop" ]; then
             VALUES_FILE="charts/${SERVICE}/values.dev.yaml"
           else
             VALUES_FILE="charts/${SERVICE}/values.prod.yaml"
