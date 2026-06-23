@@ -163,7 +163,7 @@ jobs:
         run: docker load --input /tmp/${{ inputs.service_name }}.tar
 
       - name: Run Trivy scan
-        uses: aquasecurity/trivy-action@6e7b7d1fd3e4fef0c5fa8cce1229c54b2c9bd0d
+        uses: aquasecurity/trivy-action@6e7b7d1fd3e4fef0c5fa8cce1229c54b2c9bd0d8
         with:
           image-ref: "${{ inputs.service_name }}:${{ needs.generate-tag.outputs.tag }}"
           format: table
