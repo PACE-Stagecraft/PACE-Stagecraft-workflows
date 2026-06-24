@@ -174,11 +174,24 @@ jobs:
             -no-color 2>&1 | tee plan.txt
           echo "exitcode=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
 
+      - name: Convert plan to JSON (for Infracost)
+        # Infracost cannot parse the binary plan format — it needs JSON.
+        # terraform show -json requires the same providers/state that produced
+        # the binary, so this must run in the same job immediately after plan.
+        run: terraform show -json tfplan.binary > tfplan.json
+
       - name: Upload plan artifact
         uses: actions/upload-artifact@v4
         with:
           name: tfplan-${{ inputs.environment }}
           path: ${{ inputs.working_directory }}/tfplan.binary
+          retention-days: 1
+
+      - name: Upload plan JSON (for Infracost in the cost job)
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-json-${{ inputs.environment }}
+          path: ${{ inputs.working_directory }}/tfplan.json
           retention-days: 1
 
       - name: Upload plan text (for the cost job to read without re-planning)
@@ -226,11 +239,11 @@ jobs:
       - uses: actions/checkout@v4
         if: github.event_name == 'pull_request' && env.HAS_INFRACOST_KEY == 'true'
 
-      - name: Download plan artifact
+      - name: Download plan JSON artifact
         if: github.event_name == 'pull_request' && env.HAS_INFRACOST_KEY == 'true'
         uses: actions/download-artifact@v4
         with:
-          name: tfplan-${{ inputs.environment }}
+          name: tfplan-json-${{ inputs.environment }}
           path: ${{ inputs.working_directory }}
 
       - name: Setup Infracost
@@ -242,7 +255,7 @@ jobs:
       - name: Generate Infracost cost diff
         if: github.event_name == 'pull_request' && env.HAS_INFRACOST_KEY == 'true'
         run: |
-          infracost breakdown --path tfplan.binary \
+          infracost breakdown --path tfplan.json \
             --format json \
             --out-file /tmp/infracost.json
 
