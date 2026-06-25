@@ -36,9 +36,6 @@ jobs:
           TAG="${{ inputs.image_tag }}"
           REPO_URL="${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ inputs.aws_region }}.amazonaws.com/${SERVICE}"
 
-          # develop -> the live dev cluster's values; main -> values reserved
-          # for the (not-yet-deployed) prod cluster. Derived purely from the
-          # ref that triggered this build, not a caller-supplied branch name.
           if [ "${{ github.ref }}" = "refs/heads/develop" ]; then
             VALUES_FILE="charts/${SERVICE}/values.dev.yaml"
           else
@@ -53,11 +50,6 @@ jobs:
           sed -i "s|^  repository: .*|  repository: \"${REPO_URL}\"|" "$VALUES_FILE"
           sed -i "s/^  tag: .*/  tag: \"${TAG}\"/" "$VALUES_FILE"
 
-          # mainAccountId backs the ServiceAccount's IRSA role-arn annotation
-          # (agora-api/webhook/worker only — mcp-github/frontend don't have an
-          # IRSA role and won't have this field). Without this, the account ID
-          # used for repository: above would update on every deploy but the
-          # IAM role-arn would silently keep pointing at the OLD account.
           if grep -q "^  mainAccountId:" "$VALUES_FILE"; then
             sed -i "s/^  mainAccountId: .*/  mainAccountId: \"${{ secrets.AWS_ACCOUNT_ID }}\"/" "$VALUES_FILE"
           fi
@@ -73,10 +65,6 @@ jobs:
           git diff --staged --quiet && echo "No changes" && exit 0
           git commit -m "chore(${{ inputs.service_name }}): bump image to ${{ inputs.image_tag }}"
 
-          # Multiple services can land a helm-update around the same time,
-          # each touching a different chart's values file — never a real
-          # content conflict, just a race on whoever pushes to main first.
-          # Rebase and retry instead of failing the whole CI run on a race.
           for i in 1 2 3 4 5; do
             if git push; then
               exit 0

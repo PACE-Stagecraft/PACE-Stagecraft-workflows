@@ -24,14 +24,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # SonarCloud uses git blame history for new-code/ownership metrics —
-          # a shallow checkout makes that data incomplete.
           fetch-depth: 0
 
-      # Informational only for now: this step reports findings to SonarCloud's
-      # dashboard and (on PRs) posts a decoration comment, but does NOT fail
-      # the build. Add a SonarSource/sonarqube-quality-gate-action step here
-      # later if/when you want a failing quality gate to block CI.
       - name: SonarCloud Scan
         uses: SonarSource/sonarqube-scan-action@v4
         with:

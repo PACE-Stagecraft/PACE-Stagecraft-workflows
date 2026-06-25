@@ -30,8 +30,6 @@ on:
         required: false
 
 jobs:
-  # ── Format check — pure syntax, no AWS access, no terraform init needed.
-  # Split out so a formatting nit fails fast without waiting on init/AWS auth.
   fmt:
     name: Format Check
     runs-on: ubuntu-latest
@@ -49,11 +47,6 @@ jobs:
       - name: Terraform Format Check
         run: terraform fmt -check -recursive
 
-  # ── Checkov — static IaC security/compliance scan. Operates on the raw .tf
-  # source, no terraform init/AWS access needed. Informational only for now
-  # (soft_fail) — this repo has known, already-documented gaps (e.g.
-  # unencrypted RDS) that shouldn't block every PR until triaged. Findings
-  # still surface in the Security tab via SARIF upload.
   checkov:
     name: Checkov IaC Scan
     runs-on: ubuntu-latest
@@ -73,9 +66,6 @@ jobs:
           output_file_path: reports
 
       - name: Locate the SARIF file
-        # The action writes some checkov-version-specific filename into the
-        # output dir (varies by checkov release) — find it by extension
-        # instead of hardcoding a name that could silently stop matching.
         if: always()
         id: find_sarif
         run: |
@@ -94,9 +84,6 @@ jobs:
           sarif_file: ${{ steps.find_sarif.outputs.path }}
           category: checkov-${{ inputs.environment }}
 
-  # ── Validate — needs AWS creds (terraform init reads the S3 backend +
-  # downloads providers) but not a plan. Split out so an invalid config fails
-  # before ever attempting a plan.
   validate:
     name: Validate
     runs-on: ubuntu-latest
@@ -126,9 +113,6 @@ jobs:
       - name: Terraform Validate
         run: terraform validate
 
-  # ── Plan — the actual plan. Each job is a fresh runner, so init reruns here
-  # too (normal for split reusable workflows; AWS provider download is the
-  # only real cost and gets cached by setup-terraform's plugin cache).
   plan:
     name: Plan (${{ inputs.environment }})
     needs: validate
@@ -163,9 +147,6 @@ jobs:
       - name: Terraform Plan
         id: plan
         env:
-          # var.alert_email has no default; supply it without committing the
-          # address. Other vars come from the auto-loaded terraform.tfvars in
-          # each environment directory (no -var-file needed for dir-per-env).
           TF_VAR_alert_email: ${{ inputs.alert_email }}
         run: |
           terraform plan \
@@ -175,9 +156,6 @@ jobs:
           echo "exitcode=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
 
       - name: Convert plan to JSON (for Infracost)
-        # Infracost cannot parse the binary plan format — it needs JSON.
-        # terraform show -json requires the same providers/state that produced
-        # the binary, so this must run in the same job immediately after plan.
         run: terraform show -json tfplan.binary > tfplan.json
 
       - name: Upload plan artifact
@@ -216,13 +194,6 @@ jobs:
               body: `## Terraform Plan — \`${{ inputs.environment }}\`\n\`\`\`\n${truncated}\n\`\`\``
             });
 
-  # ── Cost estimate (Infracost) — needs the plan's binary output. Only runs
-  # on PRs, and only if the org has actually set up an Infracost API key.
-  # NEITHER job-level NOR step-level `if:` can read the `secrets` context
-  # directly (confirmed the hard way in an earlier incident — see
-  # helm-update.yml) — only `env:`/`with:`/`run:` can. So the job always
-  # runs (cheap — checkout + a no-op if the key is unset) and every
-  # consequential step is individually gated on a job-level env var instead.
   cost:
     name: Cost Estimate
     needs: plan
