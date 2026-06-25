@@ -232,6 +232,11 @@ jobs:
             --format json \
             --out-file /tmp/infracost.json
 
+      - name: Print cost summary
+        if: env.HAS_INFRACOST_KEY == 'true'
+        run: |
+          infracost output --path /tmp/infracost.json --format table
+
       - name: Post Infracost comment to PR
         if: github.event_name == 'pull_request' && env.HAS_INFRACOST_KEY == 'true'
         run: |
