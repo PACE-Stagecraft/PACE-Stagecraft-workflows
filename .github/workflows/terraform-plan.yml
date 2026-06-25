@@ -86,6 +86,7 @@ jobs:
 
   validate:
     name: Validate
+    needs: fmt
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -208,23 +209,23 @@ jobs:
       HAS_INFRACOST_KEY: ${{ secrets.INFRACOST_API_KEY != '' }}
     steps:
       - uses: actions/checkout@v4
-        if: github.event_name == 'pull_request' && env.HAS_INFRACOST_KEY == 'true'
+        if: env.HAS_INFRACOST_KEY == 'true'
 
       - name: Download plan JSON artifact
-        if: github.event_name == 'pull_request' && env.HAS_INFRACOST_KEY == 'true'
+        if: env.HAS_INFRACOST_KEY == 'true'
         uses: actions/download-artifact@v4
         with:
           name: tfplan-json-${{ inputs.environment }}
           path: ${{ inputs.working_directory }}
 
       - name: Setup Infracost
-        if: github.event_name == 'pull_request' && env.HAS_INFRACOST_KEY == 'true'
+        if: env.HAS_INFRACOST_KEY == 'true'
         uses: infracost/actions/setup@v3
         with:
           api-key: ${{ secrets.INFRACOST_API_KEY }}
 
-      - name: Generate Infracost cost diff
-        if: github.event_name == 'pull_request' && env.HAS_INFRACOST_KEY == 'true'
+      - name: Generate Infracost cost breakdown
+        if: env.HAS_INFRACOST_KEY == 'true'
         run: |
           infracost breakdown --path tfplan.json \
             --format json \
