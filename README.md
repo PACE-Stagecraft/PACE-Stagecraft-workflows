@@ -6,7 +6,7 @@ Reusable GitHub Actions workflows for all [Stagecraft-Ops](https://github.com/St
 
 Reference any workflow from a service repo:
 ```yaml
-uses: Stagecraft-Ops/stagecraft-workflows/.github/workflows/<workflow>.yml@main
+uses: PACE-Stagecraft/PACE-Stagecraft-workflows/.github/workflows/<workflow>.yml@main
 ```
 
 ## Available Workflows
